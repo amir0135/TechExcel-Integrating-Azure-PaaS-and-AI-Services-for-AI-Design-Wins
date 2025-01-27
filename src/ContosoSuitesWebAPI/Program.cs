@@ -65,7 +65,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 /**** Endpoints ****/
-// Default landing page for the API.
+// This endpoint serves as the default landing page for the API.
 app.MapGet("/", async () => 
 {
     return "Welcome to the Contoso Suites Web API!";
