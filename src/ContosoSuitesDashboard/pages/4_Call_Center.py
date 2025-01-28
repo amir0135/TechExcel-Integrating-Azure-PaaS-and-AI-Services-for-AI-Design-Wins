@@ -28,7 +28,7 @@ def create_transcription_request(audio_file, speech_recognition_language="en-US"
 
     # Create an instance of a speech config with specified subscription key and service region.
     speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=speech_region)
-    speech_config.speech_recognition_language=speech_recognition_language
+    speech_config.speech_recognition_language = speech_recognition_language
 
     # Prepare audio settings for the wave stream
     channels = 1
@@ -51,13 +51,30 @@ def create_transcription_request(audio_file, speech_recognition_language="en-US"
     def stop_cb(evt):
         print(f'CLOSING on {evt}')
         nonlocal done
-        done= True
+        done = True
 
-    # TODO: Subscribe to the events fired by the conversation transcriber
-    # TODO: stop continuous transcription on either session stopped or canceled events
+    # 1) Subscribe to the events fired by the conversation transcriber
+    transcriber.transcribed.connect(handle_final_result)
+    transcriber.session_started.connect(lambda evt: print(f'SESSION STARTED: {evt}'))
+    transcriber.session_stopped.connect(lambda evt: print(f'SESSION STOPPED {evt}'))
+    transcriber.canceled.connect(lambda evt: print(f'CANCELED {evt}'))
 
-    # TODO: remove this placeholder code and perform the actual transcription
-    all_results = ['This is a test.', 'Fill in with real transcription.']
+    # 2) Stop continuous transcription on either session stopped or canceled events
+    transcriber.session_stopped.connect(stop_cb)
+    transcriber.canceled.connect(stop_cb)
+
+    # Start transcription
+    transcriber.start_transcribing_async()
+
+    # Read the entire WAV file at once and stream it to the SDK
+    _, wav_data = wavfile.read(audio_file)
+    stream.write(wav_data.tobytes())
+    stream.close()
+
+    while not done:
+        time.sleep(.5)
+
+    transcriber.stop_transcribing_async()
 
     return all_results
 
@@ -75,7 +92,7 @@ def make_azure_openai_chat_request(system, call_contents):
     client = openai.AzureOpenAI(
         azure_ad_token_provider=token_provider,
         api_version="2024-06-01",
-        azure_endpoint = aoai_endpoint
+        azure_endpoint=aoai_endpoint
     )
     # Create and return a new chat completion request
     return client.chat.completions.create(
@@ -90,7 +107,32 @@ def make_azure_openai_chat_request(system, call_contents):
 def is_call_in_compliance(call_contents, include_recording_message, is_relevant_to_topic):
     """Analyze a call for relevance and compliance."""
 
-    return "This is a placeholder result. Fill in with real compliance analysis."
+    joined_call_contents = ' '.join(call_contents)
+    if include_recording_message:
+        include_recording_message_text = "2. Was the caller aware that the call was being recorded?"
+    else:
+        include_recording_message_text = ""
+
+    if is_relevant_to_topic:
+        is_relevant_to_topic_text = "3. Was the call relevant to the hotel and resort industry?"
+    else:
+        is_relevant_to_topic_text = ""
+
+    system = f"""
+        You are an automated analysis system for Contoso Suites.
+        Contoso Suites is a luxury hotel and resort chain with locations
+        in a variety of Caribbean nations and territories.
+
+        You are analyzing a call for relevance and compliance.
+
+        You will only answer the following questions based on the call contents:
+        1. Was there vulgarity on the call?
+        {include_recording_message_text}
+        {is_relevant_to_topic_text}
+    """
+
+    response = make_azure_openai_chat_request(system, joined_call_contents)
+    return response.choices[0].message.content
 
 @st.cache_data
 def generate_extractive_summary(call_contents):
@@ -114,20 +156,14 @@ def generate_abstractive_summary(call_contents):
     language_endpoint = st.secrets["language"]["endpoint"]
     language_key = st.secrets["language"]["key"]
 
-    # The call_contents parameter is formatted as a list of strings.
-    # Join them together with spaces to pass in as a single document.
     joined_call_contents = ' '.join(call_contents)
-
     return "This is a placeholder result. Fill in with real abstractive summary."
 
 @st.cache_data
 def generate_query_based_summary(call_contents):
     """Generate a query-based summary of a call transcript."""
 
-    # The call_contents parameter is formatted as a list of strings.
-    # Join them together with spaces to pass in as a single document.
     joined_call_contents = ' '.join(call_contents)
-
     return "This is a placeholder result. Fill in with real query-based summary."
 
 @st.cache_data
@@ -138,29 +174,22 @@ def create_sentiment_analysis_and_opinion_mining_request(call_contents):
     language_endpoint = st.secrets["language"]["endpoint"]
     language_key = st.secrets["language"]["key"]
 
-    # The call_contents parameter is formatted as a list of strings.
-    # Join them together with spaces to pass in as a single document.
     joined_call_contents = ' '.join(call_contents)
-
     return "This is a placeholder result. Fill in with real sentiment analysis."
 
 def make_azure_openai_embedding_request(text):
     """Create and return a new embedding request. Key assumptions:
     - Azure OpenAI endpoint, key, and deployment name stored in Streamlit secrets."""
-
     return "This is a placeholder result. Fill in with real embedding."
 
 def normalize_text(s):
     """Normalize text for tokenization."""
-
-    s = re.sub(r'\s+',  ' ', s).strip()
+    s = re.sub(r'\s+', ' ', s).strip()
     s = re.sub(r". ,","",s)
-    # remove all instances of multiple spaces
     s = s.replace("..",".")
     s = s.replace(". .",".")
     s = s.replace("\n", "")
     s = s.strip()
-
     return s
 
 def generate_embeddings_for_call_contents(call_contents):
@@ -168,16 +197,13 @@ def generate_embeddings_for_call_contents(call_contents):
     - Call contents is a single string.
     - Azure OpenAI endpoint, key, and deployment name stored in Streamlit secrets."""
 
-    # Normalize the text for tokenization
-    # Call make_azure_openai_embedding_request() with the normalized content
-    # Return the embeddings
-
+    # For demonstration: returning dummy [0,0,0]
     return [0, 0, 0]
 
 def save_transcript_to_cosmos_db(transcript_item):
     """Save embeddings to Cosmos DB vector store. Key assumptions:
     - transcript_item is a JSON object containing call_id (int), 
-        call_transcript (string), and request_vector (list).
+      call_transcript (string), and request_vector (list).
     - Cosmos DB endpoint, client_id, and database name stored in Streamlit secrets."""
 
     cosmos_client_id = st.secrets["cosmos"]["client_id"]
@@ -190,6 +216,7 @@ def save_transcript_to_cosmos_db(transcript_item):
     # Create a CosmosClient
     # Load the Cosmos database and container
     # Insert the call transcript
+    pass  # TODO: Provide actual Cosmos insertion logic
 
 ####################### HELPER FUNCTIONS FOR MAIN() #######################
 def perform_audio_transcription(uploaded_file):
@@ -214,47 +241,29 @@ def perform_compliance_check(call_contents, include_recording_message, is_releva
             st.write("Please upload an audio file before checking for compliance.")
 
 def perform_extractive_summary_generation():
-    """Generate an extractive summary of a call transcript.
-    That is, a summary that extracts key sentences from the call transcript."""
-
-    # Set call_contents to file_transcription_results.
-    # If it is empty, write out an error message for the user.
+    """Generate an extractive summary of a call transcript."""
     if 'file_transcription_results' in st.session_state:
-        # Use st.spinner() to wrap the summarization process.
         with st.spinner("Generating extractive summary..."):
             if 'extractive_summary' in st.session_state:
                 extractive_summary = st.session_state.extractive_summary
             else:
-                # Call the generate_extractive_summary function and set
-                # its results to a variable named extractive_summary.
                 ftr = st.session_state.file_transcription_results
                 extractive_summary = generate_extractive_summary(ftr)
-                # Save the extractive_summary value to session state.
                 st.session_state.extractive_summary = extractive_summary
 
-            # Call st.success() to indicate that the extractive summarization process is complete.
             if extractive_summary is not None:
                 st.success("Extractive summarization complete!")
     else:
         st.error("Please upload an audio file before attempting to generate a summary.")
 
 def perform_abstractive_summary_generation():
-    """Generate an abstractive summary of a call transcript.
-    That is, a summary that generates new sentences to summarize the call transcript."""
-
-    # Set call_contents to file_transcription_results.
-    # If it is empty, write out an error message for the user.
+    """Generate an abstractive summary of a call transcript."""
     if 'file_transcription_results' in st.session_state:
-        # Use st.spinner() to wrap the summarization process.
         with st.spinner("Generating abstractive summary..."):
-            # Call the generate_abstractive_summary function and set
-            # its results to a variable named abstractive_summary.
             ftr = st.session_state.file_transcription_results
             abstractive_summary = generate_abstractive_summary(ftr)
-            # Save the abstractive_summary value to session state.
             st.session_state.abstractive_summary = abstractive_summary
 
-            # Call st.success() to indicate that the extractive summarization process is complete.
             if abstractive_summary is not None:
                 st.success("Abstractive summarization complete!")
     else:
@@ -262,16 +271,9 @@ def perform_abstractive_summary_generation():
 
 def perform_openai_summary():
     """Generate a query-based summary of a call transcript."""
-
-    # Set call_contents to file_transcription_results.
-    # If it is empty, write out an error message for the user.
     if 'file_transcription_results' in st.session_state:
-        # Use st.spinner() to wrap the summarization process.
         with st.spinner("Generating Azure OpenAI summary..."):
-            # Call the generate_query_based_summary function and set
-            # its results to a variable named openai_summary.
             summary = generate_query_based_summary(st.session_state.file_transcription_results)
-            # Save the openai_summary value to session state.
             st.session_state.openai_summary = summary
 
             if summary is not None:
@@ -281,20 +283,12 @@ def perform_openai_summary():
 
 def perform_sentiment_analysis_and_opinion_mining():
     """Analyze the sentiment of a call transcript and mine opinions."""
-
-    # Set call_contents to file_transcription_results.
-    # If it is empty, write out an error message for the user.
     if 'file_transcription_results' in st.session_state:
-        # Use st.spinner() to wrap the sentiment analysis process.
         with st.spinner("Analyzing transcript sentiment and mining opinions..."):
-            # Call the create_sentiment_analysis_and_opinion_mining_request
-            # function and set its results to a variable named sentiment_and_mined_opinions.
             ftr = st.session_state.file_transcription_results
             smo = create_sentiment_analysis_and_opinion_mining_request(ftr)
-            # Save the sentiment_and_mined_opinions value to session state.
             st.session_state.sentiment_and_mined_opinions = smo
 
-            # Call st.success() to indicate that the sentiment analysis process is complete.
             if smo is not None:
                 st.success("Sentiment analysis and opinion mining complete!")
     else:
@@ -302,15 +296,9 @@ def perform_sentiment_analysis_and_opinion_mining():
 
 def perform_save_embeddings_to_cosmos_db():
     """Save embeddings to Cosmos DB vector store."""
-
-    # Set call_contents to file_transcription_results.
-    # If it is empty, write out an error message for the user.
     if 'file_transcription_results' in st.session_state:
-        # Use st.spinner() to wrap the embeddings saving process.
         with st.spinner("Saving embeddings to Cosmos DB..."):
             ftr = ' '.join(st.session_state.file_transcription_results)
-            # Generate a call ID based on the text.
-            # This is for demonstration purposes--a real system should use a unique ID.
             call_id = abs(hash(ftr)) % (10 ** 8)
             embeddings = generate_embeddings_for_call_contents(ftr)
             transcript_item = {
@@ -327,7 +315,6 @@ def perform_save_embeddings_to_cosmos_db():
 
 def main():
     """Main function for the call center dashboard."""
-
     call_contents = []
     st.write(
     """
@@ -364,42 +351,41 @@ def main():
         if st.button("Check for Compliance"):
             perform_compliance_check(call_contents, include_recording_message, is_relevant_to_topic)
 
-        # Write the call_contents value to the Streamlit dashboard.
         if 'compliance_results' in st.session_state:
             st.write(st.session_state.compliance_results)
+
     with esum:
         if st.button("Generate extractive summary"):
             perform_extractive_summary_generation()
 
-        # Write the extractive_summary value to the Streamlit dashboard.
         if 'extractive_summary' in st.session_state:
             st.write(st.session_state.extractive_summary)
+
     with asum:
         if st.button("Generate abstractive summary"):
             perform_abstractive_summary_generation()
 
-        # Write the abstractive_summary value to the Streamlit dashboard.
         if 'abstractive_summary' in st.session_state:
             st.write(st.session_state.abstractive_summary)
+
     with osum:
         if st.button("Generate query-based summary"):
             perform_openai_summary()
 
-        # Write the openai_summary value to the Streamlit dashboard.
         if 'openai_summary' in st.session_state:
             st.write(st.session_state.openai_summary)
+
     with sent:
         if st.button("Analyze sentiment and mine opinions"):
             perform_sentiment_analysis_and_opinion_mining()
 
-        # Write the sentiment_and_mined_opinions value to the Streamlit dashboard.
         if 'sentiment_and_mined_opinions' in st.session_state:
             st.write(st.session_state.sentiment_and_mined_opinions)
+
     with db:
         if st.button("Save embeddings to Cosmos DB"):
             perform_save_embeddings_to_cosmos_db()
 
-        # Write the embedding_status value to the Streamlit dashboard.
         if 'embedding_status' in st.session_state:
             st.write(st.session_state.embedding_status)
 
