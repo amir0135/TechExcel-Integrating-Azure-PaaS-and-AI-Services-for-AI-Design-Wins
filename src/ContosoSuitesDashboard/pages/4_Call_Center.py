@@ -142,11 +142,30 @@ def generate_extractive_summary(call_contents):
     language_endpoint = st.secrets["language"]["endpoint"]
     language_key = st.secrets["language"]["key"]
 
-    # The call_contents parameter is formatted as a list of strings.
-    # Join them together with spaces to pass in as a single document.
     joined_call_contents = ' '.join(call_contents)
 
-    return "This is a placeholder result. Fill in with real extractive summary."
+    # 1) Create a TextAnalyticsClient
+    client = TextAnalyticsClient(language_endpoint, AzureKeyCredential(language_key))
+
+    # 2) Call the begin_analyze_actions with ExtractiveSummaryAction
+    poller = client.begin_analyze_actions(
+        [joined_call_contents],
+        actions=[
+            ExtractiveSummaryAction(max_sentence_count=2)
+        ]
+    )
+
+    # 3) Extract the summary sentences
+    extractive_summary = ""
+    for result in poller.result():
+        summary_result = result[0]
+        if summary_result.is_error:
+            st.error(f'Extractive summary resulted in an error with code "{summary_result.code}" and message "{summary_result.message}"')
+            return ''
+        extractive_summary = " ".join([sentence.text for sentence in summary_result.sentences])
+
+    # 4) Return the summary as a JSON object in the shape '{"call-summary": extractive_summary}'
+    return json.loads('{"call-summary":"' + extractive_summary + '"}')
 
 @st.cache_data
 def generate_abstractive_summary(call_contents):
@@ -157,14 +176,49 @@ def generate_abstractive_summary(call_contents):
     language_key = st.secrets["language"]["key"]
 
     joined_call_contents = ' '.join(call_contents)
-    return "This is a placeholder result. Fill in with real abstractive summary."
+
+    # 1) Create a TextAnalyticsClient
+    client = TextAnalyticsClient(language_endpoint, AzureKeyCredential(language_key))
+
+    # 2) Call the begin_analyze_actions with AbstractiveSummaryAction
+    poller = client.begin_analyze_actions(
+        [joined_call_contents],
+        actions=[
+            AbstractiveSummaryAction(sentence_count=2)
+        ]
+    )
+
+    # 3) Extract the summary
+    abstractive_summary = ""
+    for result in poller.result():
+        summary_result = result[0]
+        if summary_result.is_error:
+            st.error(f'Abstractive summary error: code "{summary_result.code}" - {summary_result.message}')
+            return ''
+        abstractive_summary = " ".join([summary.text for summary in summary_result.summaries])
+
+    # 4) Return the summary as JSON
+    return json.loads('{"call-summary":"' + abstractive_summary + '"}')
 
 @st.cache_data
 def generate_query_based_summary(call_contents):
     """Generate a query-based summary of a call transcript."""
 
     joined_call_contents = ' '.join(call_contents)
-    return "This is a placeholder result. Fill in with real query-based summary."
+
+    # Write a system prompt that instructs the large language model to:
+    #    - Generate a short (5 word) summary (call-title).
+    #    - Create a two-sentence summary (call-summary).
+    #    - Output the results in JSON format.
+    system = """
+        Write a five-word summary and label it as call-title.
+        Write a two-sentence summary and label it as call-summary.
+
+        Output the results in JSON format.
+    """
+
+    response = make_azure_openai_chat_request(system, joined_call_contents)
+    return response.choices[0].message.content
 
 @st.cache_data
 def create_sentiment_analysis_and_opinion_mining_request(call_contents):
@@ -175,7 +229,67 @@ def create_sentiment_analysis_and_opinion_mining_request(call_contents):
     language_key = st.secrets["language"]["key"]
 
     joined_call_contents = ' '.join(call_contents)
-    return "This is a placeholder result. Fill in with real sentiment analysis."
+
+    # 1) Create a TextAnalyticsClient
+    client = TextAnalyticsClient(language_endpoint, AzureKeyCredential(language_key))
+
+    # 2) Analyze sentiment of call transcript, enabling opinion mining
+    result = client.analyze_sentiment([joined_call_contents], show_opinion_mining=True)
+
+    # 3) Gather valid docs
+    doc_result = [doc for doc in result if not doc.is_error]
+    sentiment = {}
+
+    for document in doc_result:
+        # Document-level sentiment
+        sentiment["sentiment"] = document.sentiment
+        sentiment["sentiment-scores"] = {
+            "positive": document.confidence_scores.positive,
+            "neutral": document.confidence_scores.neutral,
+            "negative": document.confidence_scores.negative
+        }
+
+        sentences = []
+        for s in document.sentences:
+            sentence = {}
+            sentence["text"] = s.text
+            sentence["sentiment"] = s.sentiment
+            sentence["sentiment-scores"] = {
+                "positive": s.confidence_scores.positive,
+                "neutral": s.confidence_scores.neutral,
+                "negative": s.confidence_scores.negative
+            }
+
+            mined_opinions = []
+            for mined_opinion in s.mined_opinions:
+                opinion = {}
+                opinion["target-text"] = mined_opinion.target.text
+                opinion["target-sentiment"] = mined_opinion.target.sentiment
+                opinion["sentiment-scores"] = {
+                    "positive": mined_opinion.target.confidence_scores.positive,
+                    "negative": mined_opinion.target.confidence_scores.negative
+                }
+
+                opinion_assessments = []
+                for assessment in mined_opinion.assessments:
+                    opinion_assessment = {}
+                    opinion_assessment["text"] = assessment.text
+                    opinion_assessment["sentiment"] = assessment.sentiment
+                    opinion_assessment["sentiment-scores"] = {
+                        "positive": assessment.confidence_scores.positive,
+                        "negative": assessment.confidence_scores.negative
+                    }
+                    opinion_assessments.append(opinion_assessment)
+
+                opinion["assessments"] = opinion_assessments
+                mined_opinions.append(opinion)
+
+            sentence["mined_opinions"] = mined_opinions
+            sentences.append(sentence)
+
+        sentiment["sentences"] = sentences
+
+    return sentiment
 
 def make_azure_openai_embedding_request(text):
     """Create and return a new embedding request. Key assumptions:
@@ -196,8 +310,6 @@ def generate_embeddings_for_call_contents(call_contents):
     """Generate embeddings for call contents. Key assumptions:
     - Call contents is a single string.
     - Azure OpenAI endpoint, key, and deployment name stored in Streamlit secrets."""
-
-    # For demonstration: returning dummy [0,0,0]
     return [0, 0, 0]
 
 def save_transcript_to_cosmos_db(transcript_item):
@@ -205,23 +317,17 @@ def save_transcript_to_cosmos_db(transcript_item):
     - transcript_item is a JSON object containing call_id (int), 
       call_transcript (string), and request_vector (list).
     - Cosmos DB endpoint, client_id, and database name stored in Streamlit secrets."""
-
     cosmos_client_id = st.secrets["cosmos"]["client_id"]
     cosmos_credentials = DefaultAzureCredential(managed_identity_client_id=cosmos_client_id)
 
     cosmos_endpoint = st.secrets["cosmos"]["endpoint"]
     cosmos_database_name = st.secrets["cosmos"]["database_name"]
     cosmos_container_name = "CallTranscripts"
-
-    # Create a CosmosClient
-    # Load the Cosmos database and container
-    # Insert the call transcript
     pass  # TODO: Provide actual Cosmos insertion logic
 
 ####################### HELPER FUNCTIONS FOR MAIN() #######################
 def perform_audio_transcription(uploaded_file):
     """Generate a transcription of an uploaded audio file."""
-
     st.audio(uploaded_file, format='audio/wav')
     with st.spinner("Transcribing the call..."):
         all_results = create_transcription_request(uploaded_file)
@@ -229,7 +335,6 @@ def perform_audio_transcription(uploaded_file):
 
 def perform_compliance_check(call_contents, include_recording_message, is_relevant_to_topic):
     """Perform a compliance check on a call transcript."""
-
     with st.spinner("Checking for compliance..."):
         if 'file_transcription_results' in st.session_state:
             call_contents = st.session_state.file_transcription_results
@@ -338,9 +443,10 @@ def main():
 
     st.write("## Transcription Operations")
 
-    comp, esum, asum, osum, sent, db = st.tabs(["Compliance",
-        "Extractive Summary", "Abstractive Summary", "Azure OpenAI Summary",
-        "Sentiment and Opinions", "Save to DB"])
+    comp, esum, asum, osum, sent, db = st.tabs([
+        "Compliance", "Extractive Summary", "Abstractive Summary",
+        "Azure OpenAI Summary", "Sentiment and Opinions", "Save to DB"
+    ])
 
     with comp:
         st.write("## Is Your Call in Compliance?")
