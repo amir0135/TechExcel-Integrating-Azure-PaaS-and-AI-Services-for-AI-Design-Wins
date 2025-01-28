@@ -17,12 +17,18 @@ st.set_page_config(layout="wide")
 
 
 ############################
-# New function for vector search in Cosmos
+# Completed make_cosmos_db_vector_search_request
 ############################
 def make_cosmos_db_vector_search_request(query_embedding, max_results=5, minimum_similarity_score=0.5):
-    """Perform a vector distance query in Cosmos DB, returning transcripts
-    with VectorDistance(c.request_vector, @request_vector) above a threshold."""
-    
+    """
+    Perform a vector distance query in Cosmos DB, returning transcripts
+    with VectorDistance(c.request_vector, @request_vector) above a threshold.
+
+    Key assumptions:
+      - Query embedding is a list of floats based on a search string.
+      - Cosmos DB endpoint, client_id, and database name are stored in Streamlit secrets.
+    """
+
     # Retrieve Cosmos secrets
     cosmos_client_id = st.secrets["cosmos"]["client_id"]
     cosmos_credentials = DefaultAzureCredential(managed_identity_client_id=cosmos_client_id)
@@ -31,36 +37,36 @@ def make_cosmos_db_vector_search_request(query_embedding, max_results=5, minimum
     cosmos_database_name = st.secrets["cosmos"]["database_name"]
     cosmos_container_name = "CallTranscripts"
 
-    # Create CosmosClient with MSI credentials
+    # Create a CosmosClient with MSI credentials
     client = CosmosClient(url=cosmos_endpoint, credential=cosmos_credentials)
-    
+
     # Load the database and container
     database = client.get_database_client(cosmos_database_name)
     container = database.get_container_client(cosmos_container_name)
 
-    # Prepare the vector distance query
+    # Prepare and execute the vector distance query
     query = f"""
         SELECT TOP {max_results}
             c.id,
             c.call_id,
             c.call_transcript,
-            c.request_vector,
-            VectorDistance(c.request_vector, @query_vector) AS SimilarityScore
+            c.abstractive_summary,
+            VectorDistance(c.request_vector, @request_vector) AS SimilarityScore
         FROM c
-        WHERE VectorDistance(c.request_vector, @query_vector) > {minimum_similarity_score}
-        ORDER BY VectorDistance(c.request_vector, @query_vector)
+        WHERE VectorDistance(c.request_vector, @request_vector) > {minimum_similarity_score}
+        ORDER BY VectorDistance(c.request_vector, @request_vector)
     """
 
-    # Run the query with your query embedding
     results = container.query_items(
         query=query,
         parameters=[
-            {"name": "@query_vector", "value": query_embedding}
+            {"name": "@request_vector", "value": query_embedding}
         ],
         enable_cross_partition_query=True
     )
 
-    return list(results)  # Convert iterator to a list for easy consumption
+    # Convert iterator to a list for easier display
+    return list(results)
 
 
 @st.cache_data
@@ -334,9 +340,16 @@ def create_sentiment_analysis_and_opinion_mining_request(call_contents):
 
     return sentiment
 
+
+#####################
+# Updated function
+#####################
 def make_azure_openai_embedding_request(text):
-    """Create and return a new embedding request. Key assumptions:
-    - Azure OpenAI endpoint, key, and embedding deployment name stored in Streamlit secrets."""
+    """
+    Create and return a new embedding request. Key assumptions:
+    - Azure OpenAI endpoint, key, and embedding deployment name are stored in Streamlit secrets.
+    """
+
     token_provider = get_bearer_token_provider(
         DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
     )
@@ -348,7 +361,7 @@ def make_azure_openai_embedding_request(text):
         api_version="2024-06-01",
         azure_endpoint=aoai_endpoint
     )
-    # Create and return a new embedding request
+    # Create the embedding request 
     return client.embeddings.create(
         model=aoai_embedding_deployment_name,
         input=text
@@ -500,7 +513,7 @@ def perform_vector_search():
     if st.button("Run Vector Search"):
         if query_text.strip():
             with st.spinner("Generating embedding and searching transcripts..."):
-                # generate embedding from query text
+                # generate embedding from user query
                 embedding_resp = make_azure_openai_embedding_request(query_text)
                 query_embedding = embedding_resp.data[0].embedding
 
@@ -511,7 +524,7 @@ def perform_vector_search():
                     st.info("No transcripts matched above that similarity score.")
                 else:
                     for doc in results:
-                        st.write(f"**ID**: {doc['id']}")
+                        st.write(f"**ID**: {doc.get('id')}")
                         st.write(f"**Call ID**: {doc.get('call_id')}")
                         st.write(f"**Transcript**: {doc.get('call_transcript')}")
                         st.write(f"**Similarity Score**: {doc.get('SimilarityScore')}")
@@ -553,7 +566,7 @@ def main():
         "Azure OpenAI Summary",
         "Sentiment and Opinions",
         "Save to DB",
-        "Vector Search"  # new tab for vector searching
+        "Vector Search"
     ])
 
     comp = tabs[0]

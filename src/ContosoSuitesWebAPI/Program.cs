@@ -79,6 +79,16 @@ builder.Services.AddSingleton<Kernel>((sp) =>
         apiKey: apiKey
     );
 
+    // (NEW) Add Azure OpenAI text embedding generation 
+    // feature is experimental, so we suppress warnings:
+#pragma warning disable SK_FEATURE_EXPERIMENTAL
+    kernelBuilder.AddAzureOpenAITextEmbeddingGeneration(
+        deploymentName: builder.Configuration["AzureOpenAI:EmbeddingDeploymentName"]!,
+        endpoint: builder.Configuration["AzureOpenAI:Endpoint"]!,
+        apiKey: builder.Configuration["AzureOpenAI:ApiKey"]!
+    );
+#pragma warning restore SK_FEATURE_EXPERIMENTAL
+
     // Add the DatabaseService as a plugin (calls [KernelFunction] methods)
     var databaseService = sp.GetRequiredService<IDatabaseService>();
     kernelBuilder.Plugins.AddFromObject(databaseService);
@@ -184,7 +194,6 @@ app.MapPost("/VectorSearch", async ([FromBody] float[] queryVector, [FromService
     var results = await vectorizationService.ExecuteVectorSearch(queryVector, max_results, minimum_similarity_score);
     return results;
 })
-
     .WithName("VectorSearch")
     .WithOpenApi();
 
