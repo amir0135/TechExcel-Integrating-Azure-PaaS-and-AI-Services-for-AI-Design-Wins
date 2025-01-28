@@ -82,11 +82,13 @@ builder.Services.AddSingleton<Kernel>((sp) =>
     // (NEW) Add Azure OpenAI text embedding generation 
     // feature is experimental, so we suppress warnings:
 #pragma warning disable SK_FEATURE_EXPERIMENTAL
+#pragma warning disable SKEXP0010 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     kernelBuilder.AddAzureOpenAITextEmbeddingGeneration(
         deploymentName: builder.Configuration["AzureOpenAI:EmbeddingDeploymentName"]!,
         endpoint: builder.Configuration["AzureOpenAI:Endpoint"]!,
         apiKey: builder.Configuration["AzureOpenAI:ApiKey"]!
     );
+#pragma warning restore SKEXP0010 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 #pragma warning restore SK_FEATURE_EXPERIMENTAL
 
     // Add the DatabaseService as a plugin (calls [KernelFunction] methods)
